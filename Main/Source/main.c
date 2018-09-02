@@ -12,23 +12,28 @@
 //設定オプション
 #define SLEEP           FALSE    // スリープするか
 #define RAM_OFF         FALSE    // スリープでRAMをOFFするか (1μAほど節約のはず)
-#define RX_ENABLE       TRUE    // 受信回路を開くか
-#define TX_ENABLE       TRUE    // 連続送信する (テスターでは瞬時電流を測れないのでこれで試す)
-#define TX_POWER        0       // 送信出力 3:最大 0:最小
+#define RX_ENABLE       TRUE     // 受信回路を開くか
+#define TX_ENABLE       TRUE     // 連続送信する (テスターでは瞬時電流を測れないのでこれで試す)
+#define TX_POWER        0        // 送信出力 3:最大 0:最小
+#define ADC_POWER       TRUE     // アナログ部電源ON
+#define ADC_MEASURING   FALSE     // ADC変換連続実行
 
 /*
  * 考えられる組み合わせ   0:False 1:True
  *
- *                        SLEEP RAM_OFF RX_ENABLE TX_ENABLE   TX_POWER
- * SLEEP                    1      1       -          -          -
- * SLEEP+RAM                1      0       -          -          -
- * WAKE                     0      -       0          0          -
- * WAKE+RX(IDLE)            0      -       1          0          -
- * WAKE+TX3(CONT)           0      -       0          1          3 　　×　電流値がバラついて測れない（低く出る）
- * WAKE+RX(IDLE)+TX0(CONT)  0      -       1          1          0 　　×
- * WAKE+RX(IDLE)+TX1(CONT)  0      -       1          1          1 　　×
- * WAKE+RX(IDLE)+TX2(CONT)  0      -       1          1          2 　　×
- * WAKE+RX(IDLE)+TX3(CONT)  0      -       1          1          3 　　×
+ *                        SLEEP RAM_OFF RX_ENABLE TX_ENABLE   TX_POWER  ADC_POWER   ADC_MEAS
+ * SLEEP                    1      1       -          -          -          -          -
+ * SLEEP+RAM                1      0       -          -          -          -          -
+ * WAKE                     0      -       0          0          -          -          -
+ * WAKE+RX(IDLE)            0      -       1          0          -          -          -
+ * WAKE+ADC_STANDBY         0      -       0          0          -          1          0
+ * WAKE+ADC_MEASURING       0      -       0          0          -          1          1
+ *
+ * WAKE+TX3(CONT)           0      -       0          1          3 　　×テスト失敗。テスター電流値がバラついて測れない（低く出る）
+ * WAKE+RX(IDLE)+TX0(CONT)  0      -       1          1          0 　　×テスト失敗。同上
+ * WAKE+RX(IDLE)+TX1(CONT)  0      -       1          1          1 　　×テスト失敗。同上
+ * WAKE+RX(IDLE)+TX2(CONT)  0      -       1          1          2 　　×テスト失敗。同上
+ * WAKE+RX(IDLE)+TX3(CONT)  0      -       1          1          3 　　×テスト失敗。同上
  */
 
 #define UART_BAUD 115200 	        // シリアルのボーレート
@@ -108,6 +113,39 @@ static void vProcessEvCore(tsEvent *pEv, teEvent eEvent, uint32 u32evarg)
     case E_STATE_IDLE:
 
         if (eEvent == E_EVENT_START_UP) { // 起動時
+
+            if(ADC_POWER){
+                // 1) アナログ部の電源投入
+                if (!bAHI_APRegulatorEnabled()) {
+                    vAHI_ApConfigure(E_AHI_AP_REGULATOR_ENABLE,
+                        E_AHI_AP_INT_ENABLE,        // DISABLE にするとアナログ部の電源断
+                        E_AHI_AP_SAMPLE_4,          // サンプル数 2,4,6,8 が選択可能
+                        E_AHI_AP_CLOCKDIV_500KHZ,   // 周波数 250K/500K/1M/2M
+                        E_AHI_AP_INTREF);
+
+                    // レギュレーター部安定待ち
+                    while(!bAHI_APRegulatorEnabled()) ;
+                }
+                if(ADC_MEASURING){
+                    // 2) ADC 開始
+                    vAHI_AdcEnable(
+                            E_AHI_ADC_CONTINUOUS,
+                                // E_AHI_ADC_SINGLE_SHOT １回のみ
+                                // E_AHI_ADC_CONTINUOUS 連続実行
+                            E_AHI_AP_INPUT_RANGE_2,
+                                // E_AHI_AP_INPUT_RANGE_1 (0-1.2V)
+                                // または E_AHI_AP_INPUT_RANGE_2 (0-2.4V)
+                            E_AHI_ADC_SRC_VOLT
+                                // E_AHI_ADC_SRC_ADC_1 (ADC1)
+                                // E_AHI_ADC_SRC_ADC_2 (ADC2)
+                                // E_AHI_ADC_SRC_ADC_3 (ADC3)
+                                // E_AHI_ADC_SRC_ADC_4 (ADC4)
+                                // E_AHI_ADC_SRC_TEMP (温度)
+                                // E_AHI_ADC_SRC_VOLT (電圧)
+                            );
+                    vAHI_AdcStartSample(); // ADC開始
+                }
+            }
 
             if (SLEEP) {
                 if(RAM_OFF) {
